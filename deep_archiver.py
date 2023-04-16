@@ -1,6 +1,6 @@
 import os
 import boto3
-import hashlib
+from botocore.utils import calculate_tree_hash
 
 def initiate_glacier_upload(file_path, part_size):
     glacier = boto3.client('glacier')
@@ -33,32 +33,31 @@ def upload_parts(file_path, upload_id, part_size):
             if not response['checksum']:
                 raise Exception('Failed to upload part {}'.format(part_number))
             part_number += 1
-    return response
 
-def complete_glacier_upload(file_path, upload_id, response):
+def complete_glacier_upload(file_path, upload_id):
     glacier = boto3.client('glacier')
     archive_size = str(os.path.getsize(file_path))
     response = glacier.complete_multipart_upload(
         vaultName=os.environ['GLACIER_VAULT_NAME'],
         uploadId=upload_id,
         archiveSize=archive_size,
-        checksum=response['checksum']
+        checksum=calculate_tree_hash(open(file_path, 'rb'))
     )
     return response['archiveId']
 
-def upload_to_glacier_deep_archive(directory_path, part_size=1024 * 1024 * 128):
+def upload_to_glacier_deep_archive(directory_path, part_size):
     for root, dirs, files in os.walk(directory_path):
         for file in files:
             file_path = os.path.join(root, file)
             upload_id = initiate_glacier_upload(file_path, part_size)
             try:
-                response = upload_parts(file_path, upload_id, part_size)
+                upload_parts(file_path, upload_id, part_size)
             except Exception as e:
                 print(str(e))
                 continue
-            archive_id = complete_glacier_upload(file_path, upload_id, response)
+            archive_id = complete_glacier_upload(file_path, upload_id)
             print(f'Uploaded {file_path} to Glacier Deep Archive with archive ID {archive_id}')
 
 if __name__ == '__main__':
     directory_path = input('Enter directory path: ')
-    upload_to_glacier_deep_archive(directory_path)
+    upload_to_glacier_deep_archive(directory_path, part_size=1024 * 1024 * 128)
